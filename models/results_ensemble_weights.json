@@ -1,0 +1,22 @@
+{
+  "ARIMA(auto,nonseasonal,top10)": {
+    "avg_cv_mape": 21.92863787124683,
+    "weight": 0.16044578245057928
+  },
+  "LightGBM(n=500,leaves=63)": {
+    "avg_cv_mape": 13.504231193106271,
+    "weight": 0.2605374131275002
+  },
+  "MovingAverage(w=4)": {
+    "avg_cv_mape": 21.864428242223585,
+    "weight": 0.16091696624076873
+  },
+  "Prophet(top10)": {
+    "avg_cv_mape": 21.863293755972865,
+    "weight": 0.1609253162216886
+  },
+  "XGBoost(n=500,d=6)": {
+    "avg_cv_mape": 13.680816569699616,
+    "weight": 0.2571745219594633
+  }
+}

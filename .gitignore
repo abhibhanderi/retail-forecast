@@ -1,0 +1,46 @@
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# ── Environment ─────────────────────────────────────────────────────────────
+.env
+.venv/
+venv/
+
+# ── Testing / Coverage ──────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Data files (large / generated) ──────────────────────────────────────────
+data/raw/*.csv
+data/processed/train_processed.parquet
+data/processed/test_processed.parquet
+
+# ── Model artefacts (pkl files are large; result files are committed for Streamlit Cloud) ──
+models/model_moving_average_4w.pkl
+models/model_moving_average_12w.pkl
+models/model_arima.pkl
+models/model_prophet.pkl
+models/model_xgboost.pkl
+models/model_lightgbm.pkl
+
+# ── Streamlit secrets (never commit) ────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Logs ────────────────────────────────────────────────────────────────────
+pipeline.log
+logs/
+*.log
+
+# ── Notebook checkpoints ────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── OS / Editor ─────────────────────────────────────────────────────────────
+.DS_Store
+.flake8
