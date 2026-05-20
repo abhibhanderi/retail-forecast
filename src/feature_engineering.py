@@ -148,6 +148,15 @@ def create_date_features(df: pd.DataFrame) -> pd.DataFrame:
 # 4. Holiday features
 # ---------------------------------------------------------------------------
 
+# Easter Sunday dates for the three years covered by the dataset.
+# A ±7-day window around each date captures the full Easter shopping spike.
+_EASTER_DATES: list[pd.Timestamp] = [
+    pd.Timestamp("2010-04-04"),
+    pd.Timestamp("2011-04-24"),
+    pd.Timestamp("2012-04-08"),
+]
+
+
 def _thanksgiving_dates(years: Sequence[int]) -> set[pd.Timestamp]:
     # Thanksgiving = 4th Thursday of November; dataset uses Friday week-end dates
     dates: set[pd.Timestamp] = set()
@@ -238,11 +247,18 @@ def create_holiday_features(df: pd.DataFrame) -> pd.DataFrame:
         sorted(str(d.date()) for d in superbowl_fridays),
     )
 
+    # ── is_easter_week ──────────────────────────────────────────────────────
+    df["is_easter_week"] = df["Date"].apply(
+        lambda d: int(any(abs((d - e).days) <= 7 for e in _EASTER_DATES))
+    )
+    logger.debug("Added 'is_easter_week'.")
+
     new_cols = [
         "weeks_to_christmas",
         "weeks_since_last_holiday",
         "is_thanksgiving_week",
         "is_superbowl_week",
+        "is_easter_week",
     ]
     _HOLIDAY_COLS = new_cols
     logger.info("Created %d holiday feature(s): %s", len(new_cols), new_cols)

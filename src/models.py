@@ -19,7 +19,6 @@ from src.evaluation import (
 
 logger = logging.getLogger(__name__)
 
-# Directory where fitted model artefacts are written
 _MODELS_DIR = Path("models")
 
 # Canonical pkl stem for each model name returned by get_name()
@@ -184,16 +183,13 @@ class ARIMAForecaster(BaseForecaster):
         try:
             from tqdm import tqdm
         except ImportError:
-            # Graceful fallback if tqdm is not installed
-            def tqdm(iterable, **kwargs):  # type: ignore[misc]
+            def tqdm(iterable, **kwargs):  
                 return iterable
 
-        # Fit the MA fallback on the full training set
         self._fallback.fit(train_df)
 
         store_agg = _aggregate_store_weekly(train_df)
 
-        # Rank stores by total training sales; take top N
         store_totals = (
             store_agg.groupby("Store")["Weekly_Sales"]
             .sum()
@@ -279,7 +275,6 @@ class ARIMAForecaster(BaseForecaster):
                 f"{self.get_name()} has not been fitted. Call fit() first."
             )
 
-        # Get store-level forecasts for ARIMA stores
         store_date_forecasts: dict[tuple[int, pd.Timestamp], float] = {}
 
         test_agg = _aggregate_store_weekly(test_df)
@@ -307,10 +302,6 @@ class ARIMAForecaster(BaseForecaster):
                         n_periods, self._fallback._fallback_mean
                     )
             else:
-                # MA fallback at store level: sum dept means to get the store
-                # total, not the average — the store forecast is then split by
-                # dept_share, so using mean here would produce predictions that
-                # are ~(1/n_depts) × too small.
                 store_ma = self._fallback._store_dept_means
                 dept_means = [
                     v for (s, _d), v in store_ma.items() if s == store_id
@@ -323,9 +314,6 @@ class ARIMAForecaster(BaseForecaster):
 
             for date, fval in zip(store_test["Date"].values, forecast_vals):
                 store_date_forecasts[(int(store_id), pd.Timestamp(date))] = float(fval)
-
-        # The store-level forecast needs to be distributed back to dept rows.
-        # Each dept's share = store_forecast * (dept_mean / store_mean_in_train)
         dept_share: dict[tuple[int, int], float] = {}
         train_store_means: dict[int, float] = {}
         for (store, dept), dept_mean in self._fallback._store_dept_means.items():
@@ -390,15 +378,12 @@ class ProphetForecaster(BaseForecaster):
                 "Install it with: pip install prophet"
             ) from exc
 
-        # Suppress Prophet/Stan/cmdstanpy console output
         logging.getLogger("prophet").setLevel(logging.ERROR)
         logging.getLogger("cmdstanpy").setLevel(logging.ERROR)
         logging.getLogger("pystan").setLevel(logging.ERROR)
 
-        # Fit MA fallback on full training set; used for dept shares + fallback stores
         self._fallback.fit(train_df)
 
-        # Pre-compute department proportional shares of store total sales
         self._dept_share = {}
         train_store_means: dict[int, float] = {}
         for (store, dept), dept_mean in self._fallback._store_dept_means.items():
@@ -441,9 +426,6 @@ class ProphetForecaster(BaseForecaster):
                 .reset_index(drop=True)
             )
 
-            # Need at least 52 weeks (1 full year) to fit yearly seasonality
-            # reliably. With less data Prophet extrapolates the annual Fourier
-            # series beyond any observed values and produces catastrophic forecasts.
             if len(store_df) < 52:
                 logger.warning(
                     "Store %d: only %d weeks of data (need >= 52 for reliable "
@@ -1009,6 +991,7 @@ def run_baseline_comparison(
     include_tabular: bool = True,
     xgb_n_estimators: int = 500,
     lgb_n_estimators: int = 500,
+    models_to_train: list[str] | None = None,
 ) -> dict[str, dict[str, float]]:
     from src.utils import load_processed_data
 
@@ -1024,17 +1007,27 @@ def run_baseline_comparison(
     logger.info("%-42s %14s  %14s  %10s", "Model", "MAE", "RMSE", "MAPE")
     logger.info("%s", "-" * 84)
 
-    models_to_run: list[BaseForecaster] = [
-        MovingAverageForecaster(window=4),
-        MovingAverageForecaster(window=12),
-        ARIMAForecaster(auto=True, seasonal=False, top_n_stores=arima_top_n),
-    ]
-
+    # Build the full catalogue; filter by models_to_train when specified
+    _catalogue: dict[str, BaseForecaster] = {
+        "moving_average_4w":  MovingAverageForecaster(window=4),
+        "moving_average_12w": MovingAverageForecaster(window=12),
+        "arima": ARIMAForecaster(auto=True, seasonal=False, top_n_stores=arima_top_n),
+    }
     if include_tabular:
-        models_to_run.extend([
-            XGBoostForecaster(n_estimators=xgb_n_estimators),
-            LightGBMForecaster(n_estimators=lgb_n_estimators),
-        ])
+        _catalogue["xgboost"] = XGBoostForecaster(n_estimators=xgb_n_estimators)
+        _catalogue["lightgbm"] = LightGBMForecaster(n_estimators=lgb_n_estimators)
+
+    if models_to_train:
+        unknown = set(models_to_train) - set(_catalogue)
+        if unknown:
+            raise ValueError(
+                f"Unknown model(s): {unknown}. "
+                f"Valid names: {list(_catalogue.keys())}"
+            )
+        models_to_run = [_catalogue[k] for k in models_to_train]
+        logger.info("Selective training: %s", models_to_train)
+    else:
+        models_to_run = list(_catalogue.values())
 
     all_results: dict[str, dict[str, float]] = {}
 
@@ -1051,17 +1044,20 @@ def run_baseline_comparison(
     comparison_df = compare_models(all_results)
     logger.info("%s", comparison_df.to_string(index=False))
 
-    # Persist results
+    # Persist results — merge with existing file when only a subset was trained
     results_path = models_dir / "results_metrics.json"
+    serialisable = {
+        name: {k: float(v) for k, v in m.items()}
+        for name, m in all_results.items()
+    }
+    if models_to_train and results_path.exists():
+        with open(results_path, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+        existing.update(serialisable)
+        serialisable = existing
     with open(results_path, "w", encoding="utf-8") as f:
-        # np floats are not JSON-serialisable by default
-        serialisable = {
-            name: {k: float(v) for k, v in m.items()}
-            for name, m in all_results.items()
-        }
         json.dump(serialisable, f, indent=2)
-    logger.info("Baseline results saved -> '%s'", results_path)
-    logger.info("Results saved to '%s'", results_path)
+    logger.info("Results saved -> '%s'", results_path)
 
     return all_results
 
@@ -1101,6 +1097,19 @@ if __name__ == "__main__":
         "--lgb-n-estimators", type=int, default=500,
         help="LightGBM boosting rounds (default 500)",
     )
+    parser.add_argument(
+        "--models-to-train",
+        nargs="+",
+        default=None,
+        choices=[
+            "moving_average_4w", "moving_average_12w",
+            "arima", "xgboost", "lightgbm",
+        ],
+        help=(
+            "Train only the specified model(s) and skip the rest. "
+            "Example: --models-to-train xgboost lightgbm"
+        ),
+    )
     args = parser.parse_args()
 
     run_baseline_comparison(
@@ -1110,4 +1119,5 @@ if __name__ == "__main__":
         include_tabular=not args.no_tabular,
         xgb_n_estimators=args.xgb_n_estimators,
         lgb_n_estimators=args.lgb_n_estimators,
+        models_to_train=args.models_to_train,
     )

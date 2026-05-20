@@ -9,16 +9,12 @@ pd.set_option("future.no_silent_downcasting", True)
 
 logger = logging.getLogger(__name__)
 
-# Columns that must not contain NaN after cleaning
 _CRITICAL_COLUMNS = ["Store", "Dept", "Date", "Weekly_Sales"]
 
-# MarkDown columns present in features.csv
 _MARKDOWN_COLS = ["MarkDown1", "MarkDown2", "MarkDown3", "MarkDown4", "MarkDown5"]
 
-# Store-type ordinal mapping
 _TYPE_MAP: dict[str, int] = {"A": 1, "B": 2, "C": 3}
 
-# Temporal boundary for train/test split — must align with walk_forward_cv
 _TEST_START_DATE = "2012-04-06"
 
 
@@ -65,7 +61,6 @@ def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     initial_rows = len(df)
 
-    # --- MarkDown columns ---
     markdown_nan_counts = {col: int(df[col].isna().sum()) for col in _MARKDOWN_COLS}
     total_markdown_filled = sum(markdown_nan_counts.values())
     df[_MARKDOWN_COLS] = df[_MARKDOWN_COLS].fillna(0.0).infer_objects(copy=False)
@@ -75,14 +70,12 @@ def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
         markdown_nan_counts,
     )
 
-    # --- Binary markdown active flag ---
     df["is_markdown_active"] = (df[_MARKDOWN_COLS].gt(0).any(axis=1)).astype(int)
     logger.info(
         "Created 'is_markdown_active': %d rows with active promotions",
         df["is_markdown_active"].sum(),
     )
 
-    # --- CPI: forward-fill then backward-fill within each store ---
     cpi_nan_before = int(df["CPI"].isna().sum())
     df["CPI"] = (
         df.groupby("Store")["CPI"]
@@ -95,7 +88,6 @@ def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
         cpi_nan_after,
     )
 
-    # --- Unemployment: forward-fill then backward-fill within each store ---
     unemp_nan_before = int(df["Unemployment"].isna().sum())
     df["Unemployment"] = (
         df.groupby("Store")["Unemployment"]
@@ -108,7 +100,6 @@ def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
         unemp_nan_after,
     )
 
-    # --- Drop rows with NaN in critical columns ---
     nan_mask = df[_CRITICAL_COLUMNS].isna().any(axis=1)
     rows_dropped = int(nan_mask.sum())
     if rows_dropped:
@@ -135,7 +126,6 @@ def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
 def encode_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    # --- Store Type ordinal encoding ---
     unknown_types = set(df["Type"].unique()) - set(_TYPE_MAP.keys())
     if unknown_types:
         raise ValueError(
@@ -150,7 +140,6 @@ def encode_features(df: pd.DataFrame) -> pd.DataFrame:
         df["Type_encoded"].value_counts().to_dict(),
     )
 
-    # --- IsHoliday bool → int ---
     df["IsHoliday"] = df["IsHoliday"].astype(int)
     logger.info(
         "Converted 'IsHoliday' to int — holiday weeks: %d",
