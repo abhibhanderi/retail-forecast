@@ -8,8 +8,8 @@ from dashboard.config import (
     _MODEL_RESULT_KEYS,
     _TRAIN_TEST_SPLIT,
     BORDER,
-    DARK_TEXT,
     DANGER,
+    DARK_TEXT,
     MID_TEXT,
     MODEL_PRED_COLS,
     PAGE_BG,
@@ -18,6 +18,33 @@ from dashboard.config import (
     TEST_START,
 )
 from dashboard.data_loader import _load_results
+
+
+def _usd(x: float, signed: bool = False) -> str:
+    """Format a number as a dollar string using Python — avoids sprintf.js compat issues."""
+    if pd.isna(x):
+        return ""
+    if signed:
+        return f"+${x:,.0f}" if x >= 0 else f"-${abs(x):,.0f}"
+    return f"${x:,.0f}"
+
+
+def _pct(x: float) -> str:
+    """Format a number as a signed percentage string."""
+    if pd.isna(x):
+        return ""
+    return f"+{x:.1f}%" if x >= 0 else f"{x:.1f}%"
+
+
+def _err_color(val: str) -> str:
+    """Return CSS text color for signed string values (used with df.style.map)."""
+    if not isinstance(val, str) or not val:
+        return ""
+    if val.startswith("-"):
+        return f"color: {DANGER}"
+    if val.startswith("+"):
+        return f"color: {SUCCESS}"
+    return ""
 from dashboard.helpers import (
     _apply_filters,
     _chart_card,
@@ -268,28 +295,37 @@ def render_forecast_tab(preds: pd.DataFrame, actuals_train: pd.DataFrame, filter
         if "Error (%)" in disp.columns:
             disp["Error (%)"] = disp["Error (%)"].round(2)
 
+        # Pre-format dollar and percent error columns as strings
+        for c in ["Actual Sales", primary_col_name] + [m for m in compare_models if m in disp.columns]:
+            if c in disp.columns:
+                disp[c] = disp[c].apply(_usd)
+        if "Error ($)" in disp.columns:
+            disp["Error ($)"] = disp["Error ($)"].apply(lambda x: _usd(x, signed=True))
+        if "Error (%)" in disp.columns:
+            disp["Error (%)"] = disp["Error (%)"].apply(_pct)
+
+        # Color error columns: red for negative, green for positive
+        _err_cols = [c for c in ["Error ($)", "Error (%)"] if c in disp.columns]
+        styled_disp = disp.style.map(_err_color, subset=_err_cols)
+
         # Build column configs
         col_cfg: dict = {
             "Week": st.column_config.TextColumn("Week", width="medium"),
-            "Actual Sales": st.column_config.NumberColumn(
+            "Actual Sales": st.column_config.TextColumn(
                 "Actual Sales",
-                format="$%,.0f",
                 help="Actual recorded sales for this week",
             ),
-            primary_col_name: st.column_config.NumberColumn(
+            primary_col_name: st.column_config.TextColumn(
                 f"Predicted ({primary_model})",
-                format="$%,.0f",
                 help=f"Forecast from {primary_model}",
             ),
-            "Error ($)": st.column_config.NumberColumn(
+            "Error ($)": st.column_config.TextColumn(
                 "Error ($)",
-                format="$%+,.0f",
                 help="Predicted minus Actual. Positive = over-forecast, negative = under-forecast.",
             ),
-            "Error (%)": st.column_config.NumberColumn(
+            "Error (%)": st.column_config.TextColumn(
                 "Error (%)",
-                format="%+.1f%%",
-                help="Percentage error. Green < 15%, yellow 15–30%, red > 30%.",
+                help="Percentage error.",
             ),
             "Holiday": st.column_config.TextColumn(
                 "Holiday?",
@@ -299,14 +335,11 @@ def render_forecast_tab(preds: pd.DataFrame, actuals_train: pd.DataFrame, filter
         }
         for m in compare_models:
             if m in disp.columns:
-                col_cfg[m] = st.column_config.NumberColumn(
-                    f"Predicted ({m})",
-                    format="$%,.0f",
-                )
+                col_cfg[m] = st.column_config.TextColumn(f"Predicted ({m})")
 
         st.markdown('<div class="chart-card" style="padding: 12px 16px;">', unsafe_allow_html=True)
         st.dataframe(
-            disp,
+            styled_disp,
             use_container_width=True,
             hide_index=True,
             column_config=col_cfg,
@@ -367,17 +400,28 @@ def render_forecast_tab(preds: pd.DataFrame, actuals_train: pd.DataFrame, filter
                 store_summary = store_summary.sort_values(primary_model, ascending=False).reset_index(drop=True)
                 store_summary["Store"] = "Store " + store_summary["Store"].astype(str)
 
+                for c in ["Actual", primary_model]:
+                    if c in store_summary.columns:
+                        store_summary[c] = store_summary[c].apply(_usd)
+                if "Error ($)" in store_summary.columns:
+                    store_summary["Error ($)"] = store_summary["Error ($)"].apply(
+                        lambda x: _usd(x, signed=True)
+                    )
+                if "Error (%)" in store_summary.columns:
+                    store_summary["Error (%)"] = store_summary["Error (%)"].apply(_pct)
+                _ss_err_cols = [c for c in ["Error ($)", "Error (%)"] if c in store_summary.columns]
+                styled_ss = store_summary.style.map(_err_color, subset=_ss_err_cols)
                 st.markdown('<div class="chart-card" style="padding: 12px 16px;">', unsafe_allow_html=True)
                 st.dataframe(
-                    store_summary,
+                    styled_ss,
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         "Store":       st.column_config.TextColumn("Store"),
-                        "Actual":      st.column_config.NumberColumn("Actual Sales", format="$%,.0f"),
-                        primary_model: st.column_config.NumberColumn("Predicted Sales", format="$%,.0f"),
-                        "Error ($)":   st.column_config.NumberColumn("Error ($)", format="$%+,.0f"),
-                        "Error (%)":   st.column_config.NumberColumn("Error (%)", format="%+.1f%%"),
+                        "Actual":      st.column_config.TextColumn("Actual Sales"),
+                        primary_model: st.column_config.TextColumn("Predicted Sales"),
+                        "Error ($)":   st.column_config.TextColumn("Error ($)"),
+                        "Error (%)":   st.column_config.TextColumn("Error (%)"),
                     },
                     height=min(500, len(store_summary) * 36 + 50),
                 )
@@ -419,17 +463,28 @@ def render_forecast_tab(preds: pd.DataFrame, actuals_train: pd.DataFrame, filter
                 ).round(1)
                 dept_summary = dept_summary.sort_values("Predicted", ascending=False).reset_index(drop=True)
 
+                for c in ["Actual", "Predicted"]:
+                    if c in dept_summary.columns:
+                        dept_summary[c] = dept_summary[c].apply(_usd)
+                if "Error ($)" in dept_summary.columns:
+                    dept_summary["Error ($)"] = dept_summary["Error ($)"].apply(
+                        lambda x: _usd(x, signed=True)
+                    )
+                if "Error (%)" in dept_summary.columns:
+                    dept_summary["Error (%)"] = dept_summary["Error (%)"].apply(_pct)
+                _ds_err_cols = [c for c in ["Error ($)", "Error (%)"] if c in dept_summary.columns]
+                styled_ds = dept_summary.style.map(_err_color, subset=_ds_err_cols)
                 st.markdown('<div class="chart-card" style="padding: 12px 16px;">', unsafe_allow_html=True)
                 st.dataframe(
-                    dept_summary,
+                    styled_ds,
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         "Dept":       st.column_config.NumberColumn("Dept", format="%d"),
-                        "Actual":     st.column_config.NumberColumn("Actual Sales", format="$%,.0f"),
-                        "Predicted":  st.column_config.NumberColumn(f"Predicted ({primary_model})", format="$%,.0f"),
-                        "Error ($)":  st.column_config.NumberColumn("Error ($)", format="$%+,.0f"),
-                        "Error (%)":  st.column_config.NumberColumn("Error (%)", format="%+.1f%%"),
+                        "Actual":     st.column_config.TextColumn("Actual Sales"),
+                        "Predicted":  st.column_config.TextColumn(f"Predicted ({primary_model})"),
+                        "Error ($)":  st.column_config.TextColumn("Error ($)"),
+                        "Error (%)":  st.column_config.TextColumn("Error (%)"),
                     },
                     height=min(500, len(dept_summary) * 36 + 50),
                 )

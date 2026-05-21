@@ -79,6 +79,12 @@ def render_data_explorer(filters: dict) -> None:
     if "Weekly_Sales" in sample_df.columns:
         sample_df["Weekly_Sales"] = sample_df["Weekly_Sales"].round(2)
 
+    # Pre-format as string to avoid sprintf.js thousands-separator error on older Streamlit
+    sample_df = sample_df.copy()
+    sample_df["Weekly_Sales"] = sample_df["Weekly_Sales"].apply(
+        lambda x: f"${x:,.0f}" if pd.notna(x) else ""
+    )
+
     st.markdown('<div class="chart-card" style="padding: 12px 16px;">', unsafe_allow_html=True)
     st.dataframe(
         sample_df,
@@ -88,7 +94,7 @@ def render_data_explorer(filters: dict) -> None:
             "Store":        st.column_config.NumberColumn("Store", format="%d"),
             "Dept":         st.column_config.NumberColumn("Dept",  format="%d"),
             "Date":         st.column_config.DateColumn("Date"),
-            "Weekly_Sales": st.column_config.NumberColumn("Weekly Sales ($)", format="$%,.0f"),
+            "Weekly_Sales": st.column_config.TextColumn("Weekly Sales ($)"),
             "IsHoliday":    st.column_config.CheckboxColumn("Holiday?"),
             "Type":         st.column_config.TextColumn("Store Type"),
         },

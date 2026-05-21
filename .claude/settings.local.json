@@ -93,7 +93,9 @@
       "Bash(python -m flake8 dashboard/ --max-line-length=88 --exclude=__pycache__)",
       "Bash(grep -n \"^$\" d:/Projects/retail-forecating/retail-sales-forecast/dashboard/charts.py)",
       "Bash(grep -A1 \"^[0-9]*:$\")",
-      "Bash(awk -F: 'prev+1==$1{print prev, $1} {prev=$1}')"
+      "Bash(awk -F: 'prev+1==$1{print prev, $1} {prev=$1}')",
+      "Bash(grep -i \"\\\\$\\\\|number\\\\|column_config\\\\|metric\\\\|sprintf\\\\|,.0f\\\\|,.1f\\\\|,.2f\")",
+      "Bash(python -c \"import streamlit; print\\(streamlit.__version__\\)\")"
     ]
   }
 }
