@@ -18,9 +18,7 @@ venv/
 htmlcov/
 
 # ── Data files (large / generated) ──────────────────────────────────────────
-
-data/processed/train_processed.parquet
-data/processed/test_processed.parquet
+data/raw/*.csv
 
 # ── Model artefacts (pkl files are large; result files are committed for Streamlit Cloud) ──
 models/model_moving_average_4w.pkl
