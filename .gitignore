@@ -18,7 +18,7 @@ venv/
 htmlcov/
 
 # ── Data files (large / generated) ──────────────────────────────────────────
-data/raw/*.csv
+
 data/processed/train_processed.parquet
 data/processed/test_processed.parquet
 
