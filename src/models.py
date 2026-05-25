@@ -560,7 +560,7 @@ def _build_test_features(
     test_df: pd.DataFrame,
     feature_cols: list[str],
     fallback_mean: float,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     from src.feature_engineering import run_feature_engineering
 
     train_part = train_tail.copy()
@@ -574,8 +574,8 @@ def _build_test_features(
         combined_feat = run_feature_engineering(combined)
 
     test_feat = combined_feat[combined_feat["__split__"] == 1].copy()
-    avail_cols = [c for c in feature_cols if c in test_feat.columns]
-    X_test = test_feat[avail_cols].fillna(0.0).values.astype(float)
+    # reindex ensures all expected feature columns exist (fills missing with 0)
+    X_test = test_feat.reindex(columns=feature_cols, fill_value=0.0).fillna(0.0)
 
     # Build a lookup so predictions can be merged back to original test_df order
     test_feat = test_feat.reset_index(drop=True)
@@ -634,16 +634,15 @@ class XGBoostForecaster(BaseForecaster):
         all_feature_cols = get_feature_columns()
         self._feature_cols = [c for c in all_feature_cols if c in train_feat.columns]
 
-        X = train_feat[self._feature_cols].fillna(0.0).values.astype(float)
+        X = train_feat[self._feature_cols].fillna(0.0)
         y = train_feat["Weekly_Sales"].values.astype(float)
 
-        if X.shape[0] < 2:
-            logger.warning(
-                "%s: feature engineering produced %d training row(s) — too few to "
-                "train. Predictions will use fallback mean $%.2f.",
-                self.get_name(), X.shape[0], self._fallback_mean,
+        if len(X) < 2:
+            raise ValueError(
+                f"{self.get_name()}: feature engineering produced {len(X)} training "
+                f"row(s) — cannot train. This should not happen after NaN imputation; "
+                f"check feature_engineering.py."
             )
-            return self
 
         self._model = xgb.XGBRegressor(
             n_estimators=self.n_estimators,
@@ -742,16 +741,15 @@ class LightGBMForecaster(BaseForecaster):
         all_feature_cols = get_feature_columns()
         self._feature_cols = [c for c in all_feature_cols if c in train_feat.columns]
 
-        X = train_feat[self._feature_cols].fillna(0.0).values.astype(float)
+        X = train_feat[self._feature_cols].fillna(0.0)
         y = train_feat["Weekly_Sales"].values.astype(float)
 
-        if X.shape[0] < 2:
-            logger.warning(
-                "%s: feature engineering produced %d training row(s) — too few to "
-                "train. Predictions will use fallback mean $%.2f.",
-                self.get_name(), X.shape[0], self._fallback_mean,
+        if len(X) < 2:
+            raise ValueError(
+                f"{self.get_name()}: feature engineering produced {len(X)} training "
+                f"row(s) — cannot train. This should not happen after NaN imputation; "
+                f"check feature_engineering.py."
             )
-            return self
 
         self._model = lgb.LGBMRegressor(
             n_estimators=self.n_estimators,
@@ -824,24 +822,10 @@ class EnsembleForecaster(BaseForecaster):
             )
         cv_df = pd.read_csv(cv_path)
 
-        # Exclude fallback folds from weight computation: when a model has
-        # insufficient training data (e.g. XGBoost needs 52+ weeks for lag_52),
-        # it falls back to a constant mean and produces artificially high MAPE.
-        # Folds with MAPE > 3× the global median are treated as fallback folds.
-        global_median = cv_df["MAPE"].median()
-        fallback_cutoff = 3.0 * global_median
-        valid_cv = cv_df[cv_df["MAPE"] <= fallback_cutoff]
-        all_avg = cv_df.groupby("model")["MAPE"].mean()
-        valid_avg = valid_cv.groupby("model")["MAPE"].mean()
-        # For each model, use valid-fold average if any valid folds exist;
-        # fall back to the full average only if all folds exceeded the cutoff.
-        avg_mape: dict[str, float] = valid_avg.combine_first(all_avg).to_dict()
-
-        n_excluded = int((cv_df["MAPE"] > fallback_cutoff).sum())
+        avg_mape: dict[str, float] = cv_df.groupby("model")["MAPE"].mean().to_dict()
         logger.info(
-            "EnsembleForecaster: CV MAPE loaded for %d model(s) from '%s' "
-            "(cutoff=%.1f%%, %d fallback fold(s) excluded)",
-            len(avg_mape), cv_path, fallback_cutoff, n_excluded,
+            "EnsembleForecaster: CV MAPE loaded for %d model(s) from '%s'",
+            len(avg_mape), cv_path,
         )
 
         matched: list[tuple[str, BaseForecaster, float]] = []

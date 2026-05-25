@@ -270,7 +270,7 @@ def create_holiday_features(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def run_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
-    # Order matters: date/holiday before lag/rolling; lag/rolling before NaN drop
+    # Order matters: date/holiday before lag/rolling; lag/rolling before NaN fill
     original_rows = len(df)
     original_cols = set(df.columns)
 
@@ -282,21 +282,56 @@ def run_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     df = create_lag_features(df)
     df = create_rolling_features(df)
 
-    # Drop rows where any lag or rolling feature is NaN.
-    # These arise from the start of each (Store, Dept) time series.
-    leakage_guard_cols = _LAG_COLS + _ROLLING_COLS
-    rows_before_drop = len(df)
-    df = df.dropna(subset=leakage_guard_cols).reset_index(drop=True)
-    rows_dropped = rows_before_drop - len(df)
+    # Impute NaN lag/rolling cells rather than dropping rows.
+    #
+    # NaN lag cells arise when the training window is shorter than the lag
+    # period — e.g. a walk-forward CV fold with only 28 weeks of history has
+    # no lag_52 value for any row.  The old dropna() deleted the entire
+    # training matrix for such folds, forcing tree models into a mean fallback
+    # and producing artificially high MAPE (~94%) for fold 1.
+    #
+    # Strategy for lag columns:
+    #   1. Per-group mean fill (uses available longer-history rows in the same
+    #      group when some lag values do exist).
+    #   2. Global 0 for any remaining NaN (whole group is too short — signals
+    #      to the model that no annual-cycle information is available).
+    #
+    # Strategy for rolling columns:
+    #   rolling_std has NaN for the first 1–2 rows of each group because
+    #   min_periods=2 is not met after the shift(1).  Zero variance is the
+    #   correct neutral prior for a brand-new series.
+    n_imputed = 0
+
+    for col in _LAG_COLS:
+        nan_mask = df[col].isna()
+        if nan_mask.any():
+            df[col] = df.groupby(["Store", "Dept"])[col].transform(
+                lambda s: s.fillna(s.mean())
+            )
+            df[col] = df[col].fillna(0.0)
+            n_imputed += int(nan_mask.sum())
+
+    for col in _ROLLING_COLS:
+        nan_mask = df[col].isna()
+        if nan_mask.any():
+            df[col] = df[col].fillna(0.0)
+            n_imputed += int(nan_mask.sum())
 
     new_feature_cols = [c for c in df.columns if c not in original_cols]
     n_new = len(new_feature_cols)
 
-    logger.info(
-        "Feature engineering done -- %d rows (dropped %d), "
-        "%d new cols, %d total features",
-        len(df), rows_dropped, n_new, len(get_feature_columns()),
-    )
+    if n_imputed:
+        logger.info(
+            "Feature engineering done -- %d rows (%d lag/rolling NaN cells imputed "
+            "with group-mean or 0), %d new cols, %d total features",
+            len(df), n_imputed, n_new, len(get_feature_columns()),
+        )
+    else:
+        logger.info(
+            "Feature engineering done -- %d rows (no NaN imputation needed), "
+            "%d new cols, %d total features",
+            len(df), n_new, len(get_feature_columns()),
+        )
     return df
 
 

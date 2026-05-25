@@ -192,6 +192,15 @@ def walk_forward_cv(
         )
 
         y_pred = np.asarray(model_fn(train_df, test_df), dtype=float)
+
+        if len(y_pred) > 0 and np.all(y_pred == y_pred[0]):
+            logger.error(
+                "Fold %d: all %d predictions are identical (%.2f) — model likely "
+                "used a fallback mean instead of training properly. Check training "
+                "data size and feature engineering output.",
+                fold, len(y_pred), float(y_pred[0]),
+            )
+
         y_true = test_df["Weekly_Sales"].to_numpy(dtype=float)
         metrics = compute_all_metrics(y_true, y_pred)
         fold_metrics.append(metrics)
